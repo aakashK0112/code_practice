@@ -1,120 +1,208 @@
 import pandas as pd
 from sqlalchemy import create_engine
 
-from src.common.db import get_target_connection, load_config
+from src.common.db import get_target_connection
 from src.common.prerequisite import ensure_schema
+from src.common.config_loader import get_pipeline_config
+
+# 🔹 PIPELINE NAME
+PIPELINE_NAME = "press"
+
+# 🔹 LOAD CONFIG
+config = get_pipeline_config(PIPELINE_NAME)
+
+RAW_SCHEMA = "raw"
+RAW_TABLE = "press_raw"
+
+TRF_SCHEMA = "trf"
+TRF_TABLE = "press_trf"
 
 
-PIPELINE_NAME = "pdtester"
-
-SOURCE_SCHEMA = "raw"
-SOURCE_TABLE = "pdtester_raw"
-
-TARGET_SCHEMA = "trf"
-TARGET_TABLE = "pdtester_trf"
-
-
-# 🔹 SQLAlchemy engine
-def get_engine():
-    db_config = load_config()['target_db']
-
-    conn_str = (
-        f"mssql+pyodbc://@{db_config['server']}/{db_config['database']}"
-        f"?driver={db_config['driver'].replace(' ', '+')}"
-        "&trusted_connection=yes"
-    )
-
-    return create_engine(conn_str, fast_executemany=True)
-
-
-# 🔹 Extract from RAW
+# 🔥 EXTRACT FROM RAW
 def extract_data():
 
     conn = get_target_connection()
 
     query = f"""
     SELECT *
-    FROM {SOURCE_SCHEMA}.{SOURCE_TABLE}
+    FROM {RAW_SCHEMA}.{RAW_TABLE}
     """
 
     df = pd.read_sql(query, conn)
 
-    print(f"📥 RAW rows: {len(df)}")
+    print(f"📥 Extracted {len(df)} rows from RAW")
 
     return df
 
 
-# 🔹 Transform
+# 🔥 TRANSFORM LOGIC (FROM YOUR NOTEBOOK)
 def transform(df):
 
-    print("🧹 Applying TRF transformations...")
+    print("🔄 Transform started...")
 
-    # ✅ Select only required columns
+    # =========================================================
+    # STEP 1: Select Required Columns
+    # =========================================================
+    # Only keep columns needed for analysis / dashboard
     keep_cols = [
-        "DateTime", "RecordIndex", "TestCage", "Operator",
-        "PartNumber", "FixtureNumber", "StepNumber",
-        "Station1", "Station2", "Station3"
+        "Press", "RecordIndex", "DateTime", "StepNumber",
+        "FunctionDescription", "PartNumber", "RunStart",
+        "CycleEnd", "CycleTime", "Operator",
+        "TopPlate", "BottomPlate", "Oven1", "Oven2",
+        "TCUA", "TCUB", "TCUC", "TCUD",
+        "ScrewRubber", "NozzleRubber", "ScrewJacket",
+        "InjectJacket", "InjectPosition", "ClampPosition",
+        "ScrewRPM", "InjectRate", "InjectPressure",
+        "TopEjectorPosition", "EnergyMonitor",
+        "SystemPressure", "SystemFlow",
+        "InjectValvePosition", "AuxHeat"
     ]
 
-    df = df[[col for col in keep_cols if col in df.columns]]
+    # Keep only existing columns (safe)
+    cols_to_use = [c for c in keep_cols if c in df.columns]
+    df = df[cols_to_use].copy()
 
-    # ✅ Datetime conversion
-    df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
+    print(f"✅ Columns selected: {len(cols_to_use)}")
 
-    # ✅ Clean strings
+
+    # =========================================================
+    # STEP 2: Clean Text Columns (FunctionDescription)
+    # =========================================================
+    if "FunctionDescription" in df.columns:
+        df["FunctionDescription"] = (
+            df["FunctionDescription"]
+            .fillna("")                # handle null
+            .str.strip()              # remove spaces
+            .str.replace(r"\s+", " ", regex=True)  # remove multiple spaces
+            .str.title()              # standard format
+        )
+
+    print("✅ FunctionDescription cleaned")
+
+
+    # =========================================================
+    # STEP 3: Clean Text Columns (Operator)
+    # =========================================================
     if "Operator" in df.columns:
         df["Operator"] = (
             df["Operator"]
             .fillna("")
             .str.strip()
             .str.replace(r"\s+", " ", regex=True)
+            .str.title()
         )
 
-    # ✅ Remove null datetime
-    df = df.dropna(subset=["DateTime"])
+    print("✅ Operator cleaned")
 
-    # ✅ Dedup (VERY IMPORTANT)
-    df = df.sort_values("DateTime").drop_duplicates(
-        subset=["RecordIndex"],
-        keep="last"
-    )
 
-    print(f"✅ After cleaning: {len(df)}")
+    # =========================================================
+    # STEP 4: Convert Date Columns
+    # =========================================================
+    if "DateTime" in df.columns:
+        df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")
+
+    if "RunStart" in df.columns:
+        df["RunStart"] = pd.to_datetime(df["RunStart"], errors="coerce")
+
+    if "CycleEnd" in df.columns:
+        df["CycleEnd"] = pd.to_datetime(df["CycleEnd"], errors="coerce")
+
+    print("✅ Date columns converted")
+
+
+    # =========================================================
+    # STEP 5: Sort Data Properly
+    # =========================================================
+    df = df.sort_values(
+        by=["Press", "RecordIndex", "DateTime"],
+        ascending=[True, True, True]
+    ).reset_index(drop=True)
+
+    print("✅ Data sorted")
+
+
+    # =========================================================
+    # STEP 6: Handle Missing / Invalid Values (Optional)
+    # =========================================================
+    # Example: fill numeric nulls if needed
+    # df["CycleTime"] = df["CycleTime"].fillna(0)
+
+    print("✅ Missing values handled (if applicable)")
+
+
+    # =========================================================
+    # STEP 7: Add Derived Columns (Future Use)
+    # =========================================================
+    # Example (you can enable later):
+    # df["Shift"] = df["DateTime"].dt.hour.apply(lambda x: "Day" if x < 12 else "Night")
+
+    print("✅ Derived columns ready (if needed)")
+
+
+    print("🎯 Transform completed successfully")
 
     return df
 
-
-# 🔹 Load to TRF
+# 🔥 LOAD TO TRF
 def load_data(df):
 
-    engine = get_engine()
+    conn = get_target_connection()
+    engine = create_engine("mssql+pyodbc://", creator=lambda: conn)
 
     df.to_sql(
-        name=TARGET_TABLE,
-        con=engine,
-        schema=TARGET_SCHEMA,
-        if_exists="replace",   # overwrite
+        TRF_TABLE,
+        engine,
+        schema=TRF_SCHEMA,
+        if_exists="append",
         index=False
     )
 
-    print(f"📤 Loaded into TRF: {len(df)} rows")
+    print(f"📤 Loaded {len(df)} rows into {TRF_SCHEMA}.{TRF_TABLE}")
 
 
-# 🔹 MAIN
+# 🔥 MAIN TRF RUNNER
 def run_trf_layer():
 
-    print("🚀 TRF LAYER START → PDTESTER")
+    print("🚀 STARTING TRF → PRESS")
 
-    ensure_schema(TARGET_SCHEMA)
+    # ✅ IMPORTANT FIX (your issue)
+    ensure_schema(TRF_SCHEMA)
 
     df = extract_data()
 
     if df.empty:
-        print("⚠️ No RAW data")
+        print("⚠️ No data found in RAW")
         return
 
     df = transform(df)
 
     load_data(df)
 
-    print("✅ TRF COMPLETED")
+    print("✅ TRF PRESS COMPLETED")
+
+
+
+
+
+
+
+
+
+from src.layers.raw.press import run_raw_layer
+from src.layers.trf.press import run_trf_layer
+
+def run_press_pipeline():
+
+    print("🚀 STARTING PRESS PIPELINE")
+
+    # RAW
+    run_raw_layer()
+
+    # TRF
+    run_trf_layer()
+
+    print("✅ PRESS PIPELINE COMPLETED")
+
+
+if __name__ == "__main__":
+    run_press_pipeline()
