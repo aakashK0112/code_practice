@@ -1,45 +1,42 @@
-USL_PD = 5
-
-
-Parts_Tested_N_PD120 =
-CALCULATE(
-    DISTINCTCOUNT(pdtester_pbci[PID_Tested]),
-    NOT(ISBLANK(pdtester_pbci[PD_120]))
+Parts_Tested =
+SWITCH(
+    SELECTEDVALUE(Metric_Table[Metric]),
+    "PD120%", [Parts_Tested_N_PD120],
+    "PD100%", [Parts_Tested_N_PD100],
+    "PD Locate", [Parts_Tested_N_PDLocate]
 )
 
 
-P95_PD120 =
-PERCENTILEX.INC(
-    FILTER(
-        pdtester_pbci,
-        NOT(ISBLANK(pdtester_pbci[PD_120]))
-    ),
-    pdtester_pbci[PD_120],
-    0.95
+Median_Selected =
+SWITCH(
+    SELECTEDVALUE(Metric_Table[Metric]),
+    "PD120%", [Median_PD120],
+    "PD100%", [Median_PD100],
+    "PD Locate", [Median_PDLocate]
+)
+
+P95_Selected =
+SWITCH(
+    SELECTEDVALUE(Metric_Table[Metric]),
+    "PD120%", [P95_PD120],
+    "PD100%", [P95_PD100],
+    "PD Locate", [P95_PDLocate]
 )
 
 
-Median_PD120 =
-VAR P95_Value =
-    [P95_PD120]
-RETURN
-MEDIANX(
-    FILTER(
-        pdtester_pbci,
-        NOT(ISBLANK(pdtester_pbci[PD_120])) &&
-        pdtester_pbci[PD_120] <= P95_Value
-    ),
-    pdtester_pbci[PD_120]
+PDCI_Selected =
+SWITCH(
+    SELECTEDVALUE(Metric_Table[Metric]),
+    "PD120%", [PDCI_PD120],
+    "PD100%", [PDCI_PD100],
+    "PD Locate", [PDCI_PDLocate]
 )
 
-PDCI_PD120 =
-VAR MedianVal = [Median_PD120]
-VAR P95Val = [P95_PD120]
-VAR USLVal = [USL_PD]
-VAR Denominator = P95Val - MedianVal
-RETURN
-IF(
-    Denominator = 0,
-    BLANK(),
-    DIVIDE(USLVal - MedianVal, Denominator)
+
+Sort_Order =
+SWITCH(
+    Metric_Table[Metric],
+    "PD120%", 1,
+    "PD100%", 2,
+    "PD Locate", 3
 )
