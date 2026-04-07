@@ -1,109 +1,178 @@
-import os
-import yaml
-import pyodbc
-import pandas as pd
-from sqlalchemy import create_engine
-from dotenv import load_dotenv
-
-load_dotenv()
+from src.common.pipeline import run_pipeline
+from src.common.db import extract_table, load_table
+from src.common.metrics import generate_fpy
 
 # =========================================
-# CONFIG LOADER
+# CONFIG
 # =========================================
-def load_config():
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    config_path = os.path.join(base_dir, "config", "db_config.yaml")
+TRF_SCHEMA = "trf"
+TRF_TABLE = "pdtester_trf"
 
-    with open(config_path, "r") as f:
-        config = yaml.safe_load(f)
-
-    # Inject password from env
-    config["source_db"]["password"] = os.getenv("DB_PASSWORD")
-    config["target_db"]["password"] = os.getenv("DB_PASSWORD")
-
-    return config
+MART_SCHEMA = "mart"
+MART_TABLE = "pdtester_fpy_kpis"
 
 
 # =========================================
-# CONNECTION (PYODBC)
+# EXTRACT
 # =========================================
-def get_connection(db_type="target"):
-    config = load_config()
-
-    db = config[f"{db_type}_db"]
-
-    conn_str = f"""
-        DRIVER={{{db['driver']}}};
-        SERVER={db['server']};
-        DATABASE={db['database']};
-        UID={db['user']};
-        PWD={db['password']};
-        TrustServerCertificate=yes;
-    """
-
-    return pyodbc.connect(conn_str)
+def extract():
+    return extract_table(TRF_SCHEMA, TRF_TABLE)
 
 
 # =========================================
-# SQLALCHEMY ENGINE
+# TRANSFORM (KPI LOGIC)
 # =========================================
-def get_engine(db_type="target"):
-    config = load_config()
+def transform(df):
+    df = df.copy()
 
-    db = config[f"{db_type}_db"]
+    # Step 1: Ensure datatype consistency
+    if "PID_Tested" in df.columns:
+        df["PID_Tested"] = df["PID_Tested"].astype(str)
 
-    conn_str = (
-        f"mssql+pyodbc://{db['user']}:{db['password']}@"
-        f"{db['server']}/{db['database']}?"
-        f"driver={db['driver'].replace(' ', '+')}"
+    # Step 2: Generate FPY (COMMON LOGIC)
+    df = generate_fpy(
+        df,
+        keys=[
+            "Product_Description",
+            "TestCase",
+            "PartNumber",
+            "Mould_Press",
+            "Mould_Date",
+            "TestDate",
+            "ShiftDate",
+            "Shift"
+        ]
     )
 
-    return create_engine(conn_str, fast_executemany=True)
+    # Step 3: Select required columns (clean output)
+    final_cols = [
+        "Product_Description",
+        "TestCase",
+        "PartNumber",
+        "Mould_Press",
+        "Mould_Date",
+        "TestDate",
+        "ShiftDate",
+        "Shift",
+        "Total_Parts_Tested",
+        "Unique_Parts_Tested",
+        "FPY_Total_N",
+        "FPY_Group_N",
+        "FPY_Individual_N",
+        "FPY_Total_P",
+        "FPY_Group_P",
+        "FPY_Individual_P"
+    ]
 
+    df = df[final_cols]
 
-# =========================================
-# GENERIC EXTRACT
-# =========================================
-def extract_table(schema, table, db_type="target"):
-    conn = get_connection(db_type)
-
-    query = f"SELECT * FROM {schema}.{table}"
-    df = pd.read_sql(query, conn)
-
-    conn.close()
-
-    print(f"✅ Extracted {len(df)} rows from {schema}.{table}")
     return df
 
 
 # =========================================
-# GENERIC LOAD
+# LOAD
 # =========================================
-def load_table(df, schema, table, db_type="target", if_exists="replace"):
-    engine = get_engine(db_type)
+def load(df):
+    load_table(df, MART_SCHEMA, MART_TABLE)
 
-    df.to_sql(
-        table,
-        engine,
-        schema=schema,
-        if_exists=if_exists,
-        index=False
+
+# =========================================
+# RUN
+# =========================================
+if __name__ == "__main__":
+    run_pipeline(extract, transform, load, "FPY KPIs")
+    
+    
+    
+    
+    
+    
+from src.common.pipeline import run_pipeline
+from src.common.db import extract_table, load_table
+from src.common.metrics import generate_fpy
+import numpy as np
+
+# =========================================
+# CONFIG
+# =========================================
+TRF_SCHEMA = "trf"
+TRF_TABLE = "pdtester_trf"
+
+MART_SCHEMA = "mart"
+MART_TABLE = "pdtester_fpy_shift"
+
+
+# =========================================
+# EXTRACT
+# =========================================
+def extract():
+    return extract_table(TRF_SCHEMA, TRF_TABLE)
+
+
+# =========================================
+# TRANSFORM (SHIFT LOGIC ONLY)
+# =========================================
+def transform(df):
+    df = df.copy()
+
+    # Step 1: Ensure datatype consistency
+    if "PID_Tested" in df.columns:
+        df["PID_Tested"] = df["PID_Tested"].astype(str)
+
+    # Step 2: Generate FPY (COMMON LOGIC)
+    df = generate_fpy(
+        df,
+        keys=[
+            "Product_Description",
+            "TestCase",
+            "PartNumber",
+            "Mould_Press",
+            "Mould_Date",
+            "TestDate",
+            "ShiftDate",
+            "Shift"
+        ]
     )
 
-    print(f"✅ Loaded to {schema}.{table}")
+    # Step 3: Create Shift Groups
+    df["Shift_Group"] = np.where(
+        df["Shift"].isin(["A", "Morning"]),
+        "Morning",
+        "Evening"
+    )
+
+    # Step 4: Aggregate shift-wise FPY
+    df_shift = (
+        df.groupby([
+            "Product_Description",
+            "TestCase",
+            "PartNumber",
+            "Mould_Press",
+            "ShiftDate"
+        ])
+        .apply(lambda x: pd.Series({
+            "FPY_Morning": x.loc[x["Shift_Group"] == "Morning", "FPY_Group_N"].mean(),
+            "FPY_Evening": x.loc[x["Shift_Group"] == "Evening", "FPY_Group_N"].mean()
+        }))
+        .reset_index()
+    )
+
+    # Step 5: Handle nulls
+    df_shift["FPY_Morning"] = df_shift["FPY_Morning"].fillna(0)
+    df_shift["FPY_Evening"] = df_shift["FPY_Evening"].fillna(0)
+
+    return df_shift
 
 
 # =========================================
-# OPTIONAL: EXECUTE QUERY
+# LOAD
 # =========================================
-def execute_query(query, db_type="target"):
-    conn = get_connection(db_type)
-    cursor = conn.cursor()
+def load(df):
+    load_table(df, MART_SCHEMA, MART_TABLE)
 
-    cursor.execute(query)
-    conn.commit()
 
-    cursor.close()
-    conn.close()
-
-    print("✅ Query executed successfully")
+# =========================================
+# RUN
+# =========================================
+if __name__ == "__main__":
+    run_pipeline(extract, transform, load, "FPY SHIFT KPI")
