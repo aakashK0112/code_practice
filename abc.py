@@ -1,43 +1,70 @@
-def get_connection(db_type="target"):
-    config = load_config()
-    db = config[f"{db_type}_db"]
+DimDate_Material =
+VAR MinDate = MIN(material_long[Date])
+VAR MaxDate = MAX(material_long[Date])
+RETURN
+ADDCOLUMNS(
+    CALENDAR(MinDate, MaxDate),
 
-    if db.get("trusted_connection", False):
-        conn_str = f"""
-            DRIVER={{{db['driver']}}};
-            SERVER={db['server']};
-            DATABASE={db['database']};
-            Trusted_Connection=yes;
-            TrustServerCertificate=yes;
-        """
-    else:
-        conn_str = f"""
-            DRIVER={{{db['driver']}}};
-            SERVER={db['server']};
-            DATABASE={db['database']};
-            UID={db['user']};
-            PWD={db['password']};
-            TrustServerCertificate=yes;
-        """
+    // =========================
+    // BASE DATE
+    // =========================
+    "Material_Date", [Date],
 
-    return pyodbc.connect(conn_str)
+    // =========================
+    // DISPLAY COLUMNS
+    // =========================
+    "Material_Date_Display", FORMAT([Date], "dd-MMM-yyyy"),
 
-def get_engine(db_type="target"):
-    config = load_config()
-    db = config[f"{db_type}_db"]
+    "Material_Week",
+        YEAR([Date]) & "-W" & FORMAT(WEEKNUM([Date], 2), "00"),
 
-    if db.get("trusted_connection", False):
-        conn_str = (
-            f"mssql+pyodbc://@{db['server']}/{db['database']}?"
-            f"driver={db['driver'].replace(' ', '+')}"
-            "&trusted_connection=yes"
-        )
-    else:
-        conn_str = (
-            f"mssql+pyodbc://{db['user']}:{db['password']}@"
-            f"{db['server']}/{db['database']}?"
-            f"driver={db['driver'].replace(' ', '+')}"
-        )
+    "Material_Month",
+        FORMAT([Date], "MMM yyyy"),
 
-    return create_engine(conn_str, fast_executemany=True)
+    "Material_Quarter",
+        "Q" & FORMAT([Date], "Q") & " " & YEAR([Date]),
+
+    // =========================
+    // SORT COLUMNS (VERY IMPORTANT)
+    // =========================
+    "Material_Date_Sort", [Date],
+
+    "Material_Week_Sort",
+        YEAR([Date]) * 100 + WEEKNUM([Date], 2),
+
+    "Material_Month_Sort",
+        YEAR([Date]) * 100 + MONTH([Date]),
+
+    "Material_Quarter_Sort",
+        YEAR([Date]) * 10 + VALUE(FORMAT([Date], "Q"))
+)
+
+
+
+
+material_long[Date]  →  DimDate_Material[Material_Date]
+
+
+Do this one by one:
+1. Date
+Column: Material_Date_Display
+Sort by → Material_Date_Sort
+2. Week
+Column: Material_Week
+Sort by → Material_Week_Sort
+3. Month
+Column: Material_Month
+Sort by → Material_Month_Sort
+4. Quarter
+Column: Material_Quarter
+Sort by → Material_Quarter_Sort
+
+
+Material Time Axis =
+{
+    ("Day", NAMEOF('DimDate_Material'[Material_Date_Display]), 0),
+    ("Week", NAMEOF('DimDate_Material'[Material_Week]), 1),
+    ("Month", NAMEOF('DimDate_Material'[Material_Month]), 2),
+    ("Quarter", NAMEOF('DimDate_Material'[Material_Quarter]), 3)
+}
 
