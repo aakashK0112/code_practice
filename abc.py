@@ -34,3 +34,40 @@ MINX(
     CALCULATE([Cpk])
 )
 
+Worst Cp Parameter =
+VAR MinCp =
+    MINX(
+        VALUES('fact_table'[Parameter]),
+        CALCULATE([Cp])
+    )
+RETURN
+    CALCULATE(
+        SELECTEDVALUE('fact_table'[Parameter]),
+        FILTER(
+            VALUES('fact_table'[Parameter]),
+            CALCULATE([Cp]) = MinCp
+        )
+    )
+    
+Worst Cpk Parameter =
+VAR MinCpk =
+    MINX(
+        VALUES('fact_table'[Parameter]),
+        CALCULATE([Cpk])
+    )
+RETURN
+    CALCULATE(
+        SELECTEDVALUE('fact_table'[Parameter]),
+        FILTER(
+            VALUES('fact_table'[Parameter']),
+            CALCULATE([Cpk]) = MinCpk
+        )
+    )
+    
+Worst Overall Parameter =
+IF(
+    [Worst Cp Value] < [Worst Cpk Value],
+    [Worst Cp Parameter],
+    [Worst Cpk Parameter]
+)
+
