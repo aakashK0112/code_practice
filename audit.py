@@ -1,177 +1,185 @@
-import pandas as pd
-from sqlalchemy import create_engine
-
-from src.common.db import get_target_connection
-from src.common.prerequisite import ensure_schema
-
-
-# =========================================================
-# 🔁 YOUR REUSABLE FUNCTIONS (MOVE TO COMMON LATER)
-# =========================================================
-
-def generate_fpy(df, group_cols):
-
-    df = df.copy()
-
-    # Sort for stable attempt calculation
-    df = df.sort_values(group_cols + ['PID_Tested'])
-
-    # Attempt number
-    df['Attempt_No'] = df.groupby(group_cols + ['PID_Tested']).cumcount() + 1
-
-    result_list = []
-
-    for keys, df_group in df.groupby(group_cols, dropna=False):
-
-        if not isinstance(keys, tuple):
-            keys = (keys,)
-
-        row = {col: val for col, val in zip(group_cols, keys)}
-
-        row['Total_Parts_Tested'] = len(df_group)
-        row['Unique_Parts_Tested'] = df_group['PID_Tested'].nunique()
-
-        max_attempt = int(df_group['Attempt_No'].max())
-
-        for i in range(1, max_attempt + 1):
-
-            temp = df_group[df_group['Attempt_No'] == i]
-
-            row[f'TC{i}_N'] = temp['PID_Tested'].nunique()
-
-            row[f'TC{i}_PD120'] = (temp['PD120_Pass'] == 'Pass').sum()
-            row[f'TC{i}_PD100'] = (temp['PD100_Pass'] == 'Pass').sum()
-            row[f'TC{i}_PDLocate'] = (temp['PDLocate_Pass'] == 'Pass').sum()
-
-            row[f'TC{i}_to_TC{i+1}'] = (temp['PDLocate_Failed'] == 'Failed').sum()
-
-        result_list.append(row)
-
-    return pd.DataFrame(result_list)
+import socket
+import uuid
+from datetime import datetime
+import pyodbc
 
 
-def calculate_fpy(df):
-
-    df = df.copy()
-
-    df['FPY_N'] = df['TC1_PD120'] + df['TC1_PD100']
-
-    df['TPY_N'] = (
-        df['TC1_PD120'] +
-        df['TC1_PD100'] +
-        df['TC1_PDLocate']
+# =========================
+# DB CONNECTION
+# =========================
+def get_connection():
+    return pyodbc.connect(
+        "DRIVER={ODBC Driver 17 for SQL Server};"
+        "SERVER=YOUR_SERVER;"
+        "DATABASE=YOUR_DB;"
+        "UID=YOUR_USER;"
+        "PWD=YOUR_PASSWORD"
     )
 
-    df['FPY'] = df['FPY_N'] / df['Unique_Parts_Tested']
-    df['TPY'] = df['TPY_N'] / df['Unique_Parts_Tested']
 
-    df['FPY_Percent'] = df['FPY'] * 100
+# =========================
+# ENSURE SCHEMA + TABLE
+# =========================
+def ensure_audit_table():
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    return df
+    # Create schema if not exists
+    cursor.execute("""
+        IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'audit')
+        BEGIN
+            EXEC('CREATE SCHEMA audit')
+        END
+    """)
 
+    # Create table if not exists
+    cursor.execute("""
+        IF NOT EXISTS (
+            SELECT * FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_SCHEMA = 'audit' 
+            AND TABLE_NAME = 'job_run'
+        )
+        BEGIN
+            CREATE TABLE audit.job_run (
+                job_audit_id INT IDENTITY(1,1) PRIMARY KEY,
+                job_run_id VARCHAR(50),
+                job_name VARCHAR(100),
+                host_name VARCHAR(100),
+                triggered_by VARCHAR(100),
+                start_time DATETIME,
+                end_time DATETIME,
+                status VARCHAR(20),
+                total_duration_seconds INT,
+                total_duration_minutes FLOAT,
+                error_message VARCHAR(MAX),
+                created_at DATETIME DEFAULT GETDATE()
+            )
+        END
+    """)
 
-# =========================================================
-# 📥 EXTRACT
-# =========================================================
-
-def extract_data():
-
-    conn = get_target_connection()
-
-    df = pd.read_sql("""
-        SELECT *
-        FROM trf.pdtester_trf
-    """, conn)
-
-    return df
-
-
-# =========================================================
-# 🔄 TRANSFORM (UPDATED)
-# =========================================================
-
-def transform(df):
-
-    print("🔄 Applying FPY logic...")
-
-    # =========================================
-    # STEP 1: REQUIRED COLUMNS (SAFE)
-    # =========================================
-    required_cols = [
-        "Product_Description",
-        "TestCage",
-        "PartNumber",
-        "Mould_Press",
-        "ShiftDate",
-        "Shift",
-        "PID_Tested",
-        "PD120_Pass",
-        "PD100_Pass",
-        "PDLocate_Pass",
-        "PDLocate_Failed"
-    ]
-
-    cols = [c for c in required_cols if c in df.columns]
-    df = df[cols].copy()
-
-    print(f"✅ Columns used: {cols}")
-
-    # =========================================
-    # STEP 2: APPLY YOUR FPY FUNCTION
-    # =========================================
-    group_cols = [
-        "Product_Description",
-        "TestCage",
-        "PartNumber",
-        "Mould_Press",
-        "ShiftDate",
-        "Shift"
-    ]
-
-    df_fpy = generate_fpy(df, group_cols)
-
-    # =========================================
-    # STEP 3: CALCULATE KPI
-    # =========================================
-    df_final = calculate_fpy(df_fpy)
-
-    return df_final
+    conn.commit()
+    conn.close()
 
 
-# =========================================================
-# 📤 LOAD
-# =========================================================
+# =========================
+# START JOB
+# =========================
+def start_job(job_name, triggered_by="system"):
+    conn = get_connection()
+    cursor = conn.cursor()
 
-def load_data(df):
+    job_run_id = str(uuid.uuid4())
+    host_name = socket.gethostname()
+    start_time = datetime.now()
 
-    conn = get_target_connection()
-    engine = create_engine("mssql+pyodbc://", creator=lambda: conn)
+    cursor.execute("""
+        INSERT INTO audit.job_run (
+            job_run_id, job_name, host_name, triggered_by, start_time, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, job_run_id, job_name, host_name, triggered_by, start_time, "RUNNING")
 
-    df.to_sql(
-        "pdtester_shift_kpi",
-        engine,
-        schema="mart",
-        if_exists="replace",
-        index=False
-    )
+    conn.commit()
+    conn.close()
 
-    print("✅ Loaded to mart.pdtester_shift_kpi")
+    return job_run_id, start_time
 
 
-# =========================================================
-# 🚀 RUN
-# =========================================================
+# =========================
+# END JOB
+# =========================
+def end_job(job_run_id, start_time, status, error_message=None):
+    conn = get_connection()
+    cursor = conn.cursor()
 
-def run_mart_layer():
+    end_time = datetime.now()
+    duration_seconds = int((end_time - start_time).total_seconds())
+    duration_minutes = duration_seconds / 60
 
-    print("🚀 START MART PDTESTER")
+    cursor.execute("""
+        UPDATE audit.job_run
+        
+        SET 
+            end_time = ?,
+            status = ?,
+            total_duration_seconds = ?,
+            total_duration_minutes = ?,
+            error_message = ?
+        WHERE job_run_id = ?
+    """, end_time, status, duration_seconds, duration_minutes, error_message, job_run_id)
 
-    ensure_schema("mart")
+    conn.commit()
+    conn.close()
+    
+    
+#main.py
+from layers.audit.job_audit import (
+    ensure_audit_table,
+    start_job,
+    end_job
+)
 
-    df = extract_data()
+# 👉 your actual pipeline
+from pipelines.press_pipeline import run_press_pipeline
 
-    df_final = transform(df)
 
-    load_data(df_final)
+def main():
 
-    print("✅ MART PDTESTER DONE")
+    print("=" * 60)
+    print("JOB STARTED")
+    print("=" * 60)
+
+    # ✅ Step 1: Ensure audit infra
+    ensure_audit_table()
+
+    # ✅ Step 2: Start job audit
+    job_run_id, job_start_time = start_job("Press_Pipeline_Job")
+
+    job_status = "SUCCESS"
+    error_msg = None
+
+    try:
+        # 🔥 Run your pipeline
+        run_press_pipeline()
+
+    except Exception as e:
+        job_status = "FAILED"
+        error_msg = str(e)
+
+        print("❌ ERROR:", error_msg)
+
+        # important → rethrow for visibility
+        raise
+
+    finally:
+        # ✅ Step 3: End job audit
+        end_job(
+            job_run_id=job_run_id,
+            start_time=job_start_time,
+            status=job_status,
+            error_message=error_msg
+        )
+
+        print("=" * 60)
+        print(f"JOB STATUS: {job_status}")
+        print("=" * 60)
+
+
+if __name__ == "__main__":
+    main()
+    
+    
+1. ensure_audit_table()
+   → creates schema/table if missing
+
+2. start_job()
+   → inserts row (status = RUNNING)
+
+3. run_press_pipeline()
+
+4. end_job()
+   → updates:
+      - status (SUCCESS / FAILED)
+      - end_time
+      - duration
+      - error_message (if any)
