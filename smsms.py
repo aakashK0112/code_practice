@@ -1,63 +1,76 @@
-def get_connection(db_type: str = "target"):
-    config = load_config()
-    db = config[f"{db_type}_db"]
+DECLARE @dateStart DATETIME;
+DECLARE @dateEnd DATETIME;
 
-    if db.get("trusted_connection", False):
+DECLARE @partNumberPress VARCHAR(50);
 
-        conn_str = (
-            f"DRIVER={{{db['driver']}}};"
-            f"SERVER={db['server']};"
-            f"DATABASE={db['database']};"
-            f"Trusted_Connection=yes;"
-            f"TrustServerCertificate=yes;"
-        )
+DECLARE @press VARCHAR(MAX) = NULL;
+DECLARE @tester VARCHAR(MAX) = NULL;
 
-    else:
+SET @dateStart = '2026-05-01 00:00:00.000';
+SET @dateEnd = '2026-05-16 23:59:00.000';
 
-        # -------------------------------
-        # VALIDATION
-        # -------------------------------
-        username = db.get("user")
-        password = db.get("password")
+SET @partNumberPress = '2690557D05';
 
-        if not username:
-            raise ValueError(
-                f"{db_type.upper()} DB username is missing in config/env"
+-- Optional Filters
+-- SET @press = '603,605';
+-- SET @tester = 'Test93';
+
+SELECT
+    TR.DateTime,
+    TR.RecordIndex,
+    TR.TestCage,
+    TR.Operator,
+    TR.PartNumber,
+    TP.description,
+    TR.FixtureNumber,
+    TR.StepNumber,
+    TR.Description
+FROM PwK_Tandc.dbo.vWHVTestResults AS TR
+
+LEFT JOIN PwK_Tandc.dbo.tblTestProgramHeader AS TP
+    ON TP.TestProgram = TR.PartNumber
+
+LEFT JOIN PwK_Tandc.dbo.tblRS_cycleData AS C
+    ON TR.RecordIndex = C.RecordIndex
+
+WHERE
+    TR.RecordIndex IS NOT NULL
+
+    AND TR.RecordIndex IN
+    (
+        SELECT DISTINCT T.recordindex2
+
+        FROM MXQEFLEX.dbo.TRctrackingCodes AS T
+
+        WHERE
+            T.recordindex2 IS NOT NULL
+
+            AND T.DateTimeStation2
+                BETWEEN @dateStart AND @dateEnd
+
+            AND T.AreaStation1 = 'Press'
+
+            AND T.RecipeStation1 = @partNumberPress
+
+            AND (
+                    @press IS NULL
+                    OR T.MachineStation1 IN (
+                        SELECT value
+                        FROM STRING_SPLIT(@press, ',')
+                    )
+                )
+    )
+
+    AND (
+            @tester IS NULL
+            OR TestCage IN (
+                SELECT value
+                FROM STRING_SPLIT(@tester, ',')
             )
-
-        if not password:
-            raise ValueError(
-                f"{db_type.upper()} DB password is missing in config/env"
-            )
-
-        conn_str = (
-            f"DRIVER={{{db['driver']}}};"
-            f"SERVER={db['server']};"
-            f"DATABASE={db['database']};"
-            f"UID={username};"
-            f"PWD={password};"
-            f"TrustServerCertificate=yes;"
         )
 
-    try:
-        return pyodbc.connect(conn_str)
-
-    except pyodbc.InterfaceError as e:
-
-        error_msg = str(e)
-
-        if "Login failed for user" in error_msg:
-            raise Exception(
-                f"{db_type.upper()} DB login failed. "
-                f"Please verify username/password or DB permissions."
-            )
-
-        raise Exception(
-            f"{db_type.upper()} DB connection failed: {error_msg}"
-        )
-
-    except Exception as e:
-
-        raise Exception(
-            f"{db_type.upper()} unexpected DB error: {str(e)}"
-        )
+ORDER BY
+    TR.DateTime,
+    TR.StepNumber,
+    TR.PartNumber,
+    TR.TestCage;
