@@ -539,3 +539,30 @@ SWITCH (
 
 
 
+Bucket Alert Count =
+VAR _SelectedStatus =
+    SELECTEDVALUE ( Alert_Status[Alert Status] )
+
+RETURN
+SUMX (
+    VALUES ( material_vendor_spc[parameter] ),
+
+    VAR _Parameter =
+        material_vendor_spc[parameter]
+
+    VAR _Status =
+        CALCULATE (
+            [Window Alert Status],
+            TREATAS (
+                { _Parameter },
+                material_long_epdm[parameter]
+            )
+        )
+
+    RETURN
+        IF (
+            _Status = _SelectedStatus,
+            1,
+            0
+        )
+)
