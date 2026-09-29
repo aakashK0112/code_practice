@@ -294,3 +294,44 @@ CALCULATE(
         material_limits_epdm[parameter]
     )
 )
+
+
+Lower Limit =
+VAR _MaterialID =
+    SELECTEDVALUE(material_long_epdm[material_id])
+
+VAR _Parameter =
+    SELECTEDVALUE(material_long_epdm[parameter])
+
+RETURN
+CALCULATE(
+    MIN(material_limits_epdm[lower_limit]),
+    TREATAS(
+        {_MaterialID},
+        material_limits_epdm[material_id]
+    ),
+    TREATAS(
+        {_Parameter},
+        material_limits_epdm[parameter]
+    )
+)
+
+Upper Limit =
+VAR _MaterialID =
+    SELECTEDVALUE(material_long_epdm[material_id])
+
+VAR _Parameter =
+    SELECTEDVALUE(material_long_epdm[parameter])
+
+RETURN
+CALCULATE(
+    MAX(material_limits_epdm[upper_limit]),
+    TREATAS(
+        {_MaterialID},
+        material_limits_epdm[material_id]
+    ),
+    TREATAS(
+        {_Parameter},
+        material_limits_epdm[parameter]
+    )
+)
