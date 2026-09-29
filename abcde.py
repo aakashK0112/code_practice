@@ -473,3 +473,69 @@ SWITCH (
 
     "#2E7D32"
 )
+
+
+
+Bucket Alert Count =
+VAR _SelectedStatus =
+    SELECTEDVALUE ( Alert_Status[Alert Status] )
+
+RETURN
+SUMX (
+    VALUES ( material_vendor_spc[parameter] ),
+    VAR _Status =
+        CALCULATE (
+            [Window Alert Status]
+        )
+    RETURN
+        IF (
+            _Status = _SelectedStatus,
+            1,
+            0
+        )
+)
+
+
+Bucket Health Status =
+VAR _Critical =
+    CALCULATE (
+        [Bucket Alert Count],
+        Alert_Status[Alert Status] = "Critical"
+    )
+
+VAR _Warning =
+    CALCULATE (
+        [Bucket Alert Count],
+        Alert_Status[Alert Status] = "Warning"
+    )
+
+VAR _Attention =
+    CALCULATE (
+        [Bucket Alert Count],
+        Alert_Status[Alert Status] = "Attention"
+    )
+
+VAR _Bucket =
+    SELECTEDVALUE (
+        material_vendor_spc[Product_Group],
+        "All Buckets"
+    )
+
+RETURN
+SWITCH (
+    TRUE(),
+
+    _Critical > 0,
+        "🔴 Critical - " & _Bucket,
+
+    _Warning > 0,
+        "🟠 Warning - " & _Bucket,
+
+    _Attention > 0,
+        "🟡 Attention - " & _Bucket,
+
+    "🟢 In Control - " & _Bucket
+)
+
+
+
