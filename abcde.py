@@ -68,3 +68,26 @@ SWITCH (
 
     BLANK()
 )
+
+
+Parameter Alert =
+VAR _Status = [Window Alert Status]
+
+RETURN
+SWITCH (
+    TRUE(),
+
+    CONTAINSSTRING ( _Status, "Critical" ),
+        "🔴 Critical",
+
+    CONTAINSSTRING ( _Status, "Warning" ),
+        "🟠 Warning",
+
+    CONTAINSSTRING ( _Status, "Attention" ),
+        "🟡 Attention",
+
+    CONTAINSSTRING ( _Status, "In Control" ),
+        "🟢 In Control",
+
+    BLANK()
+)
