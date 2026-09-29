@@ -264,3 +264,33 @@ RETURN
         WorstRow,
         material_vendor_spc[parameter]
     )
+    
+    
+    
+    
+Lower Limit =
+VAR _Parameter =
+    SELECTEDVALUE(material_long_epdm[parameter])
+
+RETURN
+CALCULATE(
+    MIN(material_limits_epdm[lower_limit]),
+    TREATAS(
+        {_Parameter},
+        material_limits_epdm[parameter]
+    )
+)
+
+
+Upper Limit =
+VAR _Parameter =
+    SELECTEDVALUE(material_long_epdm[parameter])
+
+RETURN
+CALCULATE(
+    MAX(material_limits_epdm[upper_limit]),
+    TREATAS(
+        {_Parameter},
+        material_limits_epdm[parameter]
+    )
+)
