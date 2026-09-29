@@ -180,3 +180,87 @@ RETURN
               │           │           │
               ▼           ▼           ▼
           Parameter     Parameter    Parameter
+          
+          
+Worst Cp Value =
+VAR ParameterTable =
+    ADDCOLUMNS(
+        VALUES(material_vendor_spc[parameter]),
+        "__Cp",
+            CALCULATE([Cp Vendor])
+    )
+RETURN
+    MINX(
+        FILTER(
+            ParameterTable,
+            NOT ISBLANK([__Cp])
+        ),
+        [__Cp]
+    )
+    
+    
+Worst Cp Parameter =
+VAR ParameterTable =
+    ADDCOLUMNS(
+        VALUES(material_vendor_spc[parameter]),
+        "__Cp",
+            CALCULATE([Cp Vendor])
+    )
+
+VAR WorstRow =
+    TOPN(
+        1,
+        FILTER(
+            ParameterTable,
+            NOT ISBLANK([__Cp])
+        ),
+        [__Cp], ASC,
+        material_vendor_spc[parameter], ASC
+    )
+
+RETURN
+    MAXX(
+        WorstRow,
+        material_vendor_spc[parameter]
+    )
+    
+Worst Cpk Value =
+VAR ParameterTable =
+    ADDCOLUMNS(
+        VALUES(material_vendor_spc[parameter]),
+        "__Cpk",
+            CALCULATE([Cpk Vendor])
+    )
+RETURN
+    MINX(
+        FILTER(
+            ParameterTable,
+            NOT ISBLANK([__Cpk])
+        ),
+        [__Cpk]
+    )
+    
+Worst Cpk Parameter =
+VAR ParameterTable =
+    ADDCOLUMNS(
+        VALUES(material_vendor_spc[parameter]),
+        "__Cpk",
+            CALCULATE([Cpk Vendor])
+    )
+
+VAR WorstRow =
+    TOPN(
+        1,
+        FILTER(
+            ParameterTable,
+            NOT ISBLANK([__Cpk])
+        ),
+        [__Cpk], ASC,
+        material_vendor_spc[parameter], ASC
+    )
+
+RETURN
+    MAXX(
+        WorstRow,
+        material_vendor_spc[parameter]
+    )
