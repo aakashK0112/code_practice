@@ -335,3 +335,141 @@ CALCULATE(
         material_limits_epdm[parameter]
     )
 )
+
+
+Window Risk Level =
+VAR _CpkVal =
+    [Cpk Vendor]
+
+RETURN
+SWITCH (
+    TRUE (),
+
+    ISBLANK ( _CpkVal ),
+        BLANK (),
+
+    _CpkVal < 1.00,
+        "HIGH",
+
+    _CpkVal < 1.33,
+        "MEDIUM",
+
+    "LOW"
+)
+
+
+Window Has OOS =
+VAR _LSL =
+    [LSL Vendor]
+
+VAR _USL =
+    [USL Vendor]
+
+RETURN
+IF (
+    ISBLANK ( _LSL )
+        || ISBLANK ( _USL ),
+    BLANK (),
+
+    CALCULATE (
+        COUNTROWS ( material_vendor_spc ),
+        FILTER (
+            material_vendor_spc,
+            material_vendor_spc[value] < _LSL
+                || material_vendor_spc[value] > _USL
+        )
+    )
+)
+
+
+Window Trend Direction =
+VAR _Curr =
+    [Material Average Value]
+
+VAR _Prev =
+    CALCULATE (
+        [Material Average Value],
+        DATEADD (
+            DimDate_MaterialVendor[Material_Date],
+            -1,
+            DAY
+        )
+    )
+
+RETURN
+IF (
+    ISBLANK ( _Curr )
+        || ISBLANK ( _Prev ),
+    BLANK (),
+    IF (
+        _Curr > _Prev,
+        "UP",
+        "DOWN"
+    )
+)
+
+
+Window Alert Status =
+VAR _HasOOS =
+    [Window Has OOS]
+
+VAR _Trend =
+    UPPER ( [Window Trend Direction] )
+
+VAR _Risk =
+    UPPER ( [Window Risk Level] )
+
+VAR _Parameter =
+    SELECTEDVALUE (
+        material_vendor_spc[parameter],
+        "Multiple Parameters"
+    )
+
+RETURN
+SWITCH (
+    TRUE (),
+
+    -- Priority 1: Actual value outside specification
+    _HasOOS > 0,
+        "🔴 Critical - Out Of Spec (" & _Parameter & ")",
+
+    -- Priority 2: High capability risk and trending upward
+    _Risk = "HIGH"
+        && _Trend = "UP",
+        "🟠 Warning - Trending To Limit (" & _Parameter & ")",
+
+    -- Priority 3: Medium capability risk
+    _Risk = "MEDIUM",
+        "🟡 Attention - Capability Risk (" & _Parameter & ")",
+
+    -- Normal condition
+    "🟢 In Control (" & _Parameter & ")"
+)
+
+
+Window Alert Color =
+VAR _HasOOS =
+    [Window Has OOS]
+
+VAR _Trend =
+    UPPER ( [Window Trend Direction] )
+
+VAR _Risk =
+    UPPER ( [Window Risk Level] )
+
+RETURN
+SWITCH (
+    TRUE (),
+
+    _HasOOS > 0,
+        "#D32F2F",
+
+    _Risk = "HIGH"
+        && _Trend = "UP",
+        "#F57C00",
+
+    _Risk = "MEDIUM",
+        "#FBC02D",
+
+    "#2E7D32"
+)
